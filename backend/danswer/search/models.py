@@ -4,21 +4,49 @@ from typing import Any
 from pydantic import BaseModel
 from pydantic import validator
 
-from danswer.configs.chat_configs import DISABLE_LLM_CHUNK_FILTER
-from danswer.configs.chat_configs import HYBRID_ALPHA
-from danswer.configs.chat_configs import NUM_RERANKED_RESULTS
+from danswer.configs.chat_configs import CONTEXT_CHUNKS_ABOVE
+from danswer.configs.chat_configs import CONTEXT_CHUNKS_BELOW
 from danswer.configs.chat_configs import NUM_RETURNED_HITS
 from danswer.configs.constants import DocumentSource
 from danswer.db.models import Persona
 from danswer.indexing.models import BaseChunk
+from danswer.search.enums import LLMEvaluationType
 from danswer.search.enums import OptionalSearchSetting
 from danswer.search.enums import SearchType
-from shared_configs.configs import ENABLE_RERANKING_REAL_TIME_FLOW
+from shared_configs.enums import RerankerProvider
 
 
 MAX_METRICS_CONTENT = (
     200  # Just need enough characters to identify where in the doc the chunk is
 )
+
+
+class RerankingDetails(BaseModel):
+    # If model is None (or num_rerank is 0), then reranking is turned off
+    rerank_model_name: str | None
+    provider_type: RerankerProvider | None
+    api_key: str | None
+
+    num_rerank: int
+
+
+class SavedSearchSettings(RerankingDetails):
+    # Empty for no additional expansion
+    multilingual_expansion: list[str]
+    # Encompasses both mini and large chunks
+    multipass_indexing: bool
+
+    # For faster flows where the results should start immediately
+    # this more time intensive step can be skipped
+    disable_rerank_for_streaming: bool
+
+    def to_reranking_detail(self) -> RerankingDetails:
+        return RerankingDetails(
+            rerank_model_name=self.rerank_model_name,
+            provider_type=self.provider_type,
+            api_key=self.api_key,
+            num_rerank=self.num_rerank,
+        )
 
 
 class Tag(BaseModel):
@@ -47,8 +75,8 @@ class ChunkMetric(BaseModel):
 class ChunkContext(BaseModel):
     # Additional surrounding context options, if full doc, then chunks are deduped
     # If surrounding context overlap, it is combined into one
-    chunks_above: int = 0
-    chunks_below: int = 0
+    chunks_above: int = CONTEXT_CHUNKS_ABOVE
+    chunks_below: int = CONTEXT_CHUNKS_BELOW
     full_doc: bool = False
 
     @validator("chunks_above", "chunks_below", pre=True, each_item=False)
@@ -59,10 +87,9 @@ class ChunkContext(BaseModel):
 
 
 class SearchRequest(ChunkContext):
-    """Input to the SearchPipeline."""
-
     query: str
-    search_type: SearchType = SearchType.HYBRID
+
+    search_type: SearchType = SearchType.SEMANTIC
 
     human_selected_filters: BaseFilters | None = None
     enable_auto_detect_filters: bool | None = None
@@ -72,29 +99,33 @@ class SearchRequest(ChunkContext):
     offset: int | None = None
     limit: int | None = None
 
+    multilingual_expansion: list[str] | None = None
     recency_bias_multiplier: float = 1.0
-    hybrid_alpha: float = HYBRID_ALPHA
-    # This is to forcibly skip (or run) the step, if None it uses the system defaults
-    skip_rerank: bool | None = None
-    skip_llm_chunk_filter: bool | None = None
+    hybrid_alpha: float | None = None
+    rerank_settings: RerankingDetails | None = None
+    evaluation_type: LLMEvaluationType = LLMEvaluationType.UNSPECIFIED
 
     class Config:
         arbitrary_types_allowed = True
 
 
 class SearchQuery(ChunkContext):
+    "Processed Request that is directly passed to the SearchPipeline"
     query: str
+    processed_keywords: list[str]
+    search_type: SearchType
+    evaluation_type: LLMEvaluationType
     filters: IndexFilters
+
+    rerank_settings: RerankingDetails | None
+    hybrid_alpha: float
     recency_bias_multiplier: float
+
+    # Only used if LLM evaluation type is not skip, None to use default settings
+    max_llm_filter_sections: int
+
     num_hits: int = NUM_RETURNED_HITS
     offset: int = 0
-    search_type: SearchType = SearchType.HYBRID
-    skip_rerank: bool = not ENABLE_RERANKING_REAL_TIME_FLOW
-    skip_llm_chunk_filter: bool = DISABLE_LLM_CHUNK_FILTER
-    # Only used if not skip_rerank
-    num_rerank: int | None = NUM_RERANKED_RESULTS
-    # Only used if not skip_llm_chunk_filter
-    max_llm_filter_chunks: int = NUM_RERANKED_RESULTS
 
     class Config:
         frozen = True
@@ -116,24 +147,32 @@ class RetrievalDetails(ChunkContext):
     offset: int | None = None
     limit: int | None = None
 
+    # If this is set, only the highest matching chunk (or merged chunks) is returned
+    dedupe_docs: bool = False
+
 
 class InferenceChunk(BaseChunk):
     document_id: str
     source_type: DocumentSource
     semantic_identifier: str
+    title: str | None  # Separate from Semantic Identifier though often same
     boost: int
     recency_bias: float
     score: float | None
     hidden: bool
+    is_relevant: bool | None = None
+    relevance_explanation: str | None = None
     metadata: dict[str, str | list[str]]
     # Matched sections in the chunk. Uses Vespa syntax e.g. <hi>TEXT</hi>
     # to specify that a set of words should be highlighted. For example:
     # ["<hi>the</hi> <hi>answer</hi> is 42", "he couldn't find an <hi>answer</hi>"]
     match_highlights: list[str]
+
     # when the doc was last updated
     updated_at: datetime | None
     primary_owners: list[str] | None = None
     secondary_owners: list[str] | None = None
+    large_chunk_reference_ids: list[int] = []
 
     @property
     def unique_id(self) -> str:
@@ -159,19 +198,53 @@ class InferenceChunk(BaseChunk):
     def __hash__(self) -> int:
         return hash((self.document_id, self.chunk_id))
 
+    def __lt__(self, other: Any) -> bool:
+        if not isinstance(other, InferenceChunk):
+            return NotImplemented
+        if self.score is None:
+            if other.score is None:
+                return self.chunk_id > other.chunk_id
+            return True
+        if other.score is None:
+            return False
+        if self.score == other.score:
+            return self.chunk_id > other.chunk_id
+        return self.score < other.score
 
-class InferenceSection(InferenceChunk):
-    """Section is a combination of chunks. A section could be a single chunk, several consecutive
-    chunks or the entire document"""
+    def __gt__(self, other: Any) -> bool:
+        if not isinstance(other, InferenceChunk):
+            return NotImplemented
+        if self.score is None:
+            return False
+        if other.score is None:
+            return True
+        if self.score == other.score:
+            return self.chunk_id < other.chunk_id
+        return self.score > other.score
 
+
+class InferenceChunkUncleaned(InferenceChunk):
+    metadata_suffix: str | None
+
+    def to_inference_chunk(self) -> InferenceChunk:
+        # Create a dict of all fields except 'metadata_suffix'
+        # Assumes the cleaning has already been applied and just needs to translate to the right type
+        inference_chunk_data = {
+            k: v
+            for k, v in self.dict().items()
+            if k
+            not in ["metadata_suffix"]  # May be other fields to throw out in the future
+        }
+        return InferenceChunk(**inference_chunk_data)
+
+
+class InferenceSection(BaseModel):
+    """Section list of chunks with a combined content. A section could be a single chunk, several
+    chunks from the same document or the entire document."""
+
+    center_chunk: InferenceChunk
+    chunks: list[InferenceChunk]
     combined_content: str
-
-    @classmethod
-    def from_chunk(
-        cls, inf_chunk: InferenceChunk, content: str | None = None
-    ) -> "InferenceSection":
-        inf_chunk_data = inf_chunk.dict()
-        return cls(**inf_chunk_data, combined_content=content or inf_chunk.content)
 
 
 class SearchDoc(BaseModel):
@@ -188,6 +261,8 @@ class SearchDoc(BaseModel):
     hidden: bool
     metadata: dict[str, str | list[str]]
     score: float | None
+    is_relevant: bool | None = None
+    relevance_explanation: str | None = None
     # Matched sections in the doc. Uses Vespa syntax e.g. <hi>TEXT</hi>
     # to specify that a set of words should be highlighted. For example:
     # ["<hi>the</hi> <hi>answer</hi> is 42", "the answer is <hi>42</hi>""]
@@ -196,6 +271,7 @@ class SearchDoc(BaseModel):
     updated_at: datetime | None
     primary_owners: list[str] | None
     secondary_owners: list[str] | None
+    is_internet: bool = False
 
     def dict(self, *args: list, **kwargs: dict[str, Any]) -> dict[str, Any]:  # type: ignore
         initial_dict = super().dict(*args, **kwargs)  # type: ignore
@@ -224,6 +300,13 @@ class SavedSearchDoc(SearchDoc):
         if not isinstance(other, SavedSearchDoc):
             return NotImplemented
         return self.score < other.score
+
+
+class SavedSearchDocWithContent(SavedSearchDoc):
+    """Used for endpoints that need to return the actual contents of the retrieved
+    section in addition to the match_highlights."""
+
+    content: str
 
 
 class RetrievalDocs(BaseModel):

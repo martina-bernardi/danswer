@@ -1,13 +1,17 @@
-import {
-  Connector,
-  Credential,
-  DeletionAttemptSnapshot,
-  IndexAttemptSnapshot,
-} from "@/lib/types";
+import { Connector } from "@/lib/connectors/connectors";
+import { Credential } from "@/lib/connectors/credentials";
+import { DeletionAttemptSnapshot, IndexAttemptSnapshot } from "@/lib/types";
+
+export enum ConnectorCredentialPairStatus {
+  ACTIVE = "ACTIVE",
+  PAUSED = "PAUSED",
+  DELETING = "DELETING",
+}
 
 export interface CCPairFullInfo {
   id: number;
   name: string;
+  status: ConnectorCredentialPairStatus;
   num_docs_indexed: number;
   connector: Connector<any>;
   credential: Credential<any>;

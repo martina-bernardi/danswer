@@ -9,7 +9,7 @@ import { useState } from "react";
 import { UniqueIdentifier } from "@dnd-kit/core";
 import { DraggableTable } from "@/components/table/DraggableTable";
 import { deletePersona, personaComparator } from "./lib";
-import { FiEdit } from "react-icons/fi";
+import { FiEdit2 } from "react-icons/fi";
 import { TrashIcon } from "@/components/icons/icons";
 
 function PersonaTypeDisplay({ persona }: { persona: Persona }) {
@@ -19,6 +19,10 @@ function PersonaTypeDisplay({ persona }: { persona: Persona }) {
 
   if (persona.is_public) {
     return <Text>Global</Text>;
+  }
+
+  if (persona.groups.length > 0 || persona.users.length > 0) {
+    return <Text>Shared</Text>;
   }
 
   return <Text>Personal {persona.owner && <>({persona.owner.email})</>}</Text>;
@@ -89,7 +93,7 @@ export function PersonasTable({ personas }: { personas: Persona[] }) {
             cells: [
               <div key="name" className="flex">
                 {!persona.default_persona && (
-                  <FiEdit
+                  <FiEdit2
                     className="mr-1 my-auto cursor-pointer"
                     onClick={() =>
                       router.push(
@@ -170,7 +174,7 @@ export function PersonasTable({ personas }: { personas: Persona[] }) {
                 </div>
               </div>,
             ],
-            staticModifiers: [[1, "lg:w-[300px] xl:w-[400px] 2xl:w-[550px]"]],
+            staticModifiers: [[1, "lg:w-[250px] xl:w-[400px] 2xl:w-[550px]"]],
           };
         })}
         setRows={updatePersonaOrder}

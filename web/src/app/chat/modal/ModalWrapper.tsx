@@ -1,3 +1,7 @@
+"use client";
+import { XIcon } from "@/components/icons/icons";
+import { useRef } from "react";
+
 export const ModalWrapper = ({
   children,
   bgClassName,
@@ -9,15 +13,29 @@ export const ModalWrapper = ({
   modalClassName?: string;
   onClose?: () => void;
 }) => {
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (
+      onClose &&
+      modalRef.current &&
+      !modalRef.current.contains(e.target as Node)
+    ) {
+      onClose();
+    }
+  };
+
   return (
     <div
-      onClick={() => onClose && onClose()}
+      onMouseDown={handleMouseDown}
       className={
-        "fixed z-50 inset-0 overflow-y-auto bg-black bg-opacity-30 flex justify-center items-center " +
+        "fixed inset-0 bg-black bg-opacity-30 backdrop-blur-sm " +
+        "flex items-center justify-center z-50 " +
         (bgClassName || "")
       }
     >
       <div
+        ref={modalRef}
         onClick={(e) => {
           if (onClose) {
             e.stopPropagation();
@@ -28,6 +46,14 @@ export const ModalWrapper = ({
           (modalClassName || "")
         }
       >
+        {onClose && (
+          <div className="w-full cursor-pointer flex justify-end">
+            <button onClick={onClose}>
+              <XIcon />
+            </button>
+          </div>
+        )}
+
         {children}
       </div>
     </div>

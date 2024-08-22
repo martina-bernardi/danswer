@@ -4,37 +4,43 @@ import { CustomDropdown } from "../../Dropdown";
 interface Option {
   key: string;
   display: string | JSX.Element;
+  displayName?: string;
 }
-
 export function FilterDropdown({
   options,
   selected,
   handleSelect,
   icon,
   defaultDisplay,
+  width = "w-64",
+  dropdownWidth,
+  optionClassName,
 }: {
   options: Option[];
   selected: string[];
   handleSelect: (option: Option) => void;
   icon: JSX.Element;
   defaultDisplay: string | JSX.Element;
+  width?: string;
+  dropdownWidth?: string;
+  optionClassName?: string;
 }) {
   return (
-    <div className="w-64">
+    <div>
       <CustomDropdown
         dropdown={
           <div
             className={`
-          border 
-          border-border 
-          rounded-lg 
-          bg-background
-          flex 
-          flex-col 
-          w-64 
-          max-h-96 
-          overflow-y-auto 
-          overscroll-contain`}
+              border 
+              border-border 
+              rounded-lg 
+              bg-background
+              flex 
+              flex-col 
+              ${dropdownWidth || width}
+              max-h-96 
+              overflow-y-auto 
+              overscroll-contain`}
           >
             {options.map((option, ind) => {
               const isSelected = selected.includes(option.key);
@@ -42,12 +48,14 @@ export function FilterDropdown({
                 <div
                   key={option.key}
                   className={`
+                    ${optionClassName}
                     flex
-                    px-3 
-                    text-sm 
-                    py-2.5 
-                    select-none 
-                    cursor-pointer 
+                    px-3
+                    text-sm
+                    py-2.5
+                    select-none
+                    cursor-pointer
+                    w-fit
                     text-emphasis
                     hover:bg-hover-light
                     ${
@@ -74,18 +82,19 @@ export function FilterDropdown({
       >
         <div
           className={`
-        flex 
-        w-64
-        text-sm 
-        px-3
-        py-1.5 
-        rounded-lg 
-        border 
-        border-border
-        cursor-pointer 
-        hover:bg-hover-light`}
+            flex
+            ${width}
+            text-sm
+            px-3
+            py-1.5
+            rounded-lg 
+            border 
+            gap-x-2
+            border-border
+            cursor-pointer 
+            hover:bg-hover-light`}
         >
-          {icon}
+          <div className="flex-none my-auto">{icon}</div>
           {selected.length === 0 ? (
             defaultDisplay
           ) : (

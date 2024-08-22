@@ -42,9 +42,26 @@ class QADocsResponse(RetrievalDocs):
         return initial_dict
 
 
-# Second chunk of info for streaming QA
 class LLMRelevanceFilterResponse(BaseModel):
     relevant_chunk_indices: list[int]
+
+
+class RelevanceAnalysis(BaseModel):
+    relevant: bool
+    content: str | None = None
+
+
+class SectionRelevancePiece(RelevanceAnalysis):
+    """LLM analysis mapped to an Inference Section"""
+
+    document_id: str
+    chunk_id: int  # ID of the center chunk for a given inference section
+
+
+class DocumentRelevance(BaseModel):
+    """Contains all relevance information for a given search"""
+
+    relevance_summaries: dict[str, RelevanceAnalysis]
 
 
 class DanswerAnswerPiece(BaseModel):
@@ -59,8 +76,14 @@ class CitationInfo(BaseModel):
     document_id: str
 
 
+class MessageResponseIDInfo(BaseModel):
+    user_message_id: int | None
+    reserved_assistant_message_id: int
+
+
 class StreamingError(BaseModel):
     error: str
+    stack_trace: str | None = None
 
 
 class DanswerQuote(BaseModel):
@@ -106,12 +129,18 @@ class ImageGenerationDisplay(BaseModel):
     file_ids: list[str]
 
 
+class CustomToolResponse(BaseModel):
+    response: dict
+    tool_name: str
+
+
 AnswerQuestionPossibleReturn = (
     DanswerAnswerPiece
     | DanswerQuotes
     | CitationInfo
     | DanswerContexts
     | ImageGenerationDisplay
+    | CustomToolResponse
     | StreamingError
 )
 
